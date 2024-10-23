@@ -1,0 +1,636 @@
+---
+title: "Untitled"
+author: "Hamza Gouaref"
+date: "2024-09-19"
+output:
+  pdf_document: default
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(bigrquery)
+library(leaflet)
+library(leaflet.extras)
+library(leaflet.providers)
+library(lubridate)
+library(patchwork)
+library(sp)
+library(sf)
+library(raster)
+library(tidygeocoder)
+library(geojsonio)
+library(dplyr)
+library(rnaturalearth)
+library(broom)    
+library(stargazer)
+
+```
+
+
+
+
+#############################################################################
+
+
+```{r}
+Inflation_Data <- read.csv('https://ec.europa.eu/eurostat/api/dissemination/sdmx/2.1/data/prc_hicp_manr/M.RCH_A.CP00.EU+EA+BE+BG+CZ+DK+DE+EE+IE+EL+ES+FR+HR+IT+CY+LV+LT+LU+HU+MT+NL+AT+PL+PT+RO+SI+SK+FI+SE+IS+NO+CH+UK/?format=SDMX-CSV&returnData=ALL&startPeriod=2003-02&endPeriod=2024-08&lang=en&label=label_only')
+
+Unemployment_Data <- read_csv('https://ec.europa.eu/eurostat/api/dissemination/sdmx/2.1/data/une_rt_m/M.SA.TOTAL.PC_ACT.T.EU27_2020+EA20+BE+BG+CZ+DK+DE+EE+IE+EL+ES+FR+HR+IT+CY+LV+LT+LU+HU+MT+NL+AT+PL+PT+RO+SI+SK+FI+SE+IS+NO+CH+UK/?format=SDMX-CSV&returnData=ALL&startPeriod=1995-05&endPeriod=2024-08&lang=en&label=label_only')
+```
+
+
+###########################################################################
+
+
+
+
+
+```{r}
+Inflation_Data <- Inflation_Data %>%
+dplyr::select(geo, TIME_PERIOD, OBS_VALUE)
+
+
+Unemployment_Data <- Unemployment_Data %>%
+dplyr::select(geo, TIME_PERIOD, OBS_VALUE)
+```
+
+
+```{r}
+Inflation_Data <- Inflation_Data %>%
+rename(country = geo,
+year = TIME_PERIOD,
+inflation = OBS_VALUE)
+
+
+Unemployment_Data <- Unemployment_Data %>%
+rename(country = geo,
+year = TIME_PERIOD,
+Unemployment = OBS_VALUE)
+
+```
+
+```{r}
+Inflation_Data %>% summary()
+```
+
+```{r}
+Unemployment_Data %>% summary()
+```
+
+
+#############################################################################
+
+
+
+```{r}
+Data <- left_join(x = Inflation_Data ,y = Unemployment_Data, by = join_by(country, year))
+Data
+```
+
+############################################################################
+
+Descriptive statistics
+
+
+```{r}
+
+Data %>%
+  ggplot(aes(x = inflation)) +
+geom_density(col = "blue")+theme_bw()
+
+```
+
+
+### 9. the distribution of the variable Unemployment is normal distribution
+
+
+```{r}
+Data %>%
+  ggplot(aes(x = Unemployment)) +
+geom_density(col = "blue")+theme_bw()
+```
+
+
+### 10. summary statistics :
+
+```{r}
+summary_stats <- Data %>%
+dplyr::select(inflation, Unemployment) %>%
+summary()
+summary_stats 
+
+```
+
+```{r}
+library(psych)
+
+summary_stats <- describe(Data %>% dplyr::select(inflation, Unemployment))
+
+summary_stats
+```
+### 11. 
+```{r}
+
+
+summary_stats <- Data %>%
+  group_by(country) %>%
+  summarise(
+    mean_inflation = mean(inflation, na.rm = TRUE),
+    sd_inflation = sd(inflation, na.rm = TRUE),
+    mean_unemployment = mean(Unemployment, na.rm = TRUE),
+    sd_unemployment = sd(Unemployment, na.rm = TRUE)
+  )
+
+summary_stats
+
+```
+
+ ### 12. the average evolution of 𝑋 and 𝑌 across the years into two separated graphs
+
+
+```{r}
+
+data_avg <- Data %>%
+  group_by(year) %>%
+  summarise(
+    avg_inflation = mean(inflation, na.rm = TRUE),
+    avg_unemployment = mean(Unemployment, na.rm = TRUE)
+  )
+
+inflation_plot <- ggplot(data_avg, aes(x = year, y = avg_inflation)) +
+  geom_line(color = "blue", size = 1.2) + 
+  geom_point(color = "blue", size = 3) +
+  labs(title = "Average Inflation Over the Years", x = "Year", y = "Average Inflation (%)") +
+  theme_minimal()
+
+print(inflation_plot)
+
+
+```
+
+```{r}
+
+unemployment_plot <- ggplot(data_avg, aes(x = year, y = avg_unemployment)) +
+  geom_line(color = "red", size = 1.2) + 
+  geom_point(color = "red", size = 3) +
+  labs(title = "Average Unemployment Over the Years", x = "Year", y = "Average Unemployment (%)") +
+  theme_minimal()
+
+print(unemployment_plot)
+
+```
+
+
+```{r}
+library(gridExtra)
+
+grid.arrange(inflation_plot, unemployment_plot, ncol = 2)
+```
+
+
+
+
+### 14.
+
+```{r}
+
+
+change_data <- Data %>%
+  group_by(country) %>%
+  summarise(
+    change_inflation = inflation[year == max(year)] - inflation[year == min(year)],
+    change_unemployment = Unemployment[year == max(year)] - Unemployment[year == min(year)]
+  ) %>%
+  arrange(desc(change_inflation)) 
+
+inflation_barplot <- ggplot(change_data, aes(x = reorder(country, -change_inflation), y = change_inflation)) +
+  geom_bar(stat = "identity", fill = "red") +
+  coord_flip() +
+  labs(title = "Change in Inflation (First vs Last Year)", 
+       x = "Country", 
+       y = "Change in Inflation (%)") +
+  theme_minimal()+theme_bw()
+
+unemployment_barplot <- ggplot(change_data, aes(x = reorder(country, -change_unemployment), y = change_unemployment)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  coord_flip() +
+  labs(title = "Change in Unemployment (First vs Last Year)", 
+       x = "Country", 
+       y = "Change in Unemployment (%)") +
+  theme_minimal()+theme_bw()
+
+#grid.arrange(inflation_barplot, unemployment_barplot, ncol = 1)
+inflation_barplot
+unemployment_barplot
+```
+
+
+### Relationship between 𝑋 and y
+ 
+ ### 15
+
+```{r}
+Data %>%
+  ggplot(aes(x = inflation, y = Unemployment, color = country)) +
+  geom_point() +  
+  geom_smooth(method = "lm", se = FALSE, color = "red") +  
+  labs(title = "Relationship between Inflation (X) and Unemployment (Y)",
+       x = "Inflation Rate (%)",
+       y = "Unemployment Rate (%)") +
+  theme_bw() 
+
+```
+
+
+```{r}
+Data %>% 
+ggplot() +
+  geom_point(mapping = aes(x = inflation, y = Unemployment,col=country))+
+  geom_smooth(mapping = aes(x = inflation, y = Unemployment))+
+  theme_bw()
+
+```
+
+### 16
+
+```{r}
+Data %>%
+  ggplot(aes(x = inflation, y = Unemployment, color = country)) +
+  geom_point() +  
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2), se = FALSE, color = "red") +
+  labs(title = "Relationship between Inflation (X) and Unemployment (Y) with Quadratic Fit",
+       x = "Inflation Rate (%)",
+       y = "Unemployment Rate (%)") +
+  theme_bw() 
+
+```
+### 17
+
+```{r}
+
+
+Data_within_change <- Data %>%
+  group_by(country) %>%
+  arrange(year) %>%
+  mutate(
+    change_inflation = inflation - lag(inflation),  
+    change_unemployment = Unemployment - lag(Unemployment)  
+  ) %>%
+  filter(!is.na(change_inflation) & !is.na(change_unemployment))  
+
+ggplot(Data_within_change, aes(x = change_inflation, y = change_unemployment, color = country)) +
+  geom_point() +  
+  geom_smooth(method = "lm", se = FALSE, color = "black") +  
+  labs(title = "Scatterplot of Within-Country Changes in Inflation (X) and Unemployment (Y)",
+       x = "Change in Inflation Rate (%)",
+       y = "Change in Unemployment Rate (%)") +
+  theme_minimal()
+
+```
+###
+```{r}
+
+regression_model <- lm(Unemployment ~ inflation, data = Data)
+
+regression_summary <- tidy(regression_model)
+
+print(regression_summary)
+
+stargazer(regression_model, type = "text", title = "Regression of Unemployment (Y) on Inflation (X)",
+          dep.var.labels = "Unemployment",
+          covariate.labels = "Inflation",
+          out = "regression_table.txt")  
+
+```
+### 19
+
+```{r}
+
+
+fixed_effects_model <- lm(Unemployment ~ inflation + factor(country), data = Data)
+
+fixed_effects_summary <- tidy(fixed_effects_model)
+
+print(fixed_effects_summary)
+
+regression_model <- lm(Unemployment ~ inflation, data = Data)
+
+initial_summary <- tidy(regression_model)
+
+combined_results <- rbind(
+  cbind(Model = "Unemployment ~ Inflation", initial_summary),
+  cbind(Model = "Unemployment ~ Inflation + Country FE", fixed_effects_summary)
+)
+
+stargazer(combined_results, type = "text", title = "Regression Results: Unemployment on Inflation",
+          dep.var.labels = c("Unemployment"),
+          covariate.labels = c("Inflation", "Country FE"),
+          out = "combined_regression_table.txt")  
+
+```
+### 20
+
+```{r}
+
+fixed_effects_year_country_model <- lm(Unemployment ~ inflation + factor(country) + factor(year), data = Data)
+
+year_country_summary <- tidy(fixed_effects_year_country_model)
+
+print(year_country_summary)
+
+initial_model <- lm(Unemployment ~ inflation, data = Data)
+initial_summary <- tidy(initial_model)
+
+country_fixed_model <- lm(Unemployment ~ inflation + factor(country), data = Data)
+country_fixed_summary <- tidy(country_fixed_model)
+\\
+combined_results <- rbind(
+  cbind(Model = "Unemployment ~ Inflation", initial_summary),
+  cbind(Model = "Unemployment ~ Inflation + Country FE", country_fixed_summary),
+  cbind(Model = "Unemployment ~ Inflation + Country FE + Year FE", year_country_summary)
+)
+
+stargazer(combined_results, type = "text", title = "Regression Results: Unemployment on Inflation",
+          dep.var.labels = c("Unemployment"),
+          covariate.labels = c("Inflation", "Country FE", "Year FE"),
+          out = "combined_regression_table.txt")  
+
+```
+
+
+
+#############################################################################
+
+```{r}
+Data %>% 
+  filter(country=="France") %>% 
+ggplot(mapping = aes(x = inflation, y = Unemployment,col=country)) +
+  geom_point(shape = 4, size = 4)+
+   geom_smooth(mapping = aes(x = inflation, y = Unemployment))+theme_bw()
+```
+
+```{r}
+Data %>% 
+  filter(country==c("France","Germany","Luxembourg" ,"Italy","Spain")) %>% 
+ggplot(aes(x = inflation, y = Unemployment, col = country)) +
+geom_point()+
+  theme_bw()
+```
+
+
+```{r}
+Data %>% 
+mutate(France = case_when(country == "France" ~ "France",
+TRUE ~ "Neighboring_countries")) %>%  filter(country==c("France","Germany","Luxembourg" ,"Italy","Spain")) %>% 
+ggplot(aes(x = inflation, y = Unemployment, col = France)) +
+geom_point()+theme_bw()
+
+```
+
+
+
+```{r}
+Data %>%
+group_by(country) %>% 
+mutate(mean_inflation = mean(inflation,na.rm = T),mean_unemployment=mean(Unemployment,na.rm = T)) %>% 
+count(country,mean_inflation,mean_unemployment) %>%  
+ggplot() +
+  geom_point(mapping = aes(x = mean_inflation, y = mean_unemployment,col=country))+
+  theme_bw()
+
+```
+
+
+
+
+
+
+```{r}
+Data %>%
+  filter(country==c("France","Germany","Luxembourg" ,"Italy","Spain")) %>% 
+group_by(country) %>% 
+mutate(mean_inflation = mean(inflation,na.rm = T),mean_unemployment=mean(Unemployment,na.rm = T)) %>% 
+count(country,mean_inflation,mean_unemployment) %>% 
+ggplot(aes(x = mean_inflation, y = mean_unemployment, fill = country)) +
+geom_col(position = "dodge") +
+scale_fill_brewer(palette = "Accent") +
+geom_label(aes(label = country  , hjust = 0.1))+theme_bw()
+```
+########################################################################
+
+
+
+
+```{r}
+
+countries_df <- tibble(country = c("Austria", "Belgium", "Bulgaria", "Croatia", 
+                                   "Cyprus", "Czechia", "Denmark", "Estonia", 
+                                   "Finland", "France", "Germany", "Greece", 
+                                   "Hungary", "Iceland", "Ireland", "Italy", 
+                                   "Latvia", "Lithuania", "Luxembourg", "Malta", 
+                                   "Netherlands", "Norway", "Poland", "Portugal", 
+                                   "Romania", "Slovakia", "Slovenia", "Spain", 
+                                   "Sweden", "Switzerland", "United Kingdom"))
+
+geocoded_countries <- countries_df %>%
+  geocode(country, method = 'osm')  
+
+geocoded_countries
+```
+
+
+
+
+```{r}
+geocoded_countries <- geocoded_countries %>%
+  left_join(Data, by = "country")
+
+
+geocoded_countries <- geocoded_countries %>%
+  drop_na()
+
+```
+
+
+```{r}
+
+inflation_palette <- colorNumeric(
+  palette = "YlOrRd",  
+  domain = geocoded_countries$inflation
+)
+
+unemployment_palette <- colorNumeric(
+  palette = "Blues", 
+  domain = geocoded_countries$Unemployment
+)
+```
+
+```{r}
+leaflet(geocoded_countries) %>% 
+  addProviderTiles(providers$CartoDB.Voyager, group = "Light map") %>%
+  addScaleBar() %>%
+  addCircleMarkers(
+    lng = geocoded_countries$long, lat = geocoded_countries$lat,
+    radius = 8,
+    color = ~inflation_palette(inflation),  
+    stroke = TRUE, fillOpacity = 0.9,
+    label = ~paste(country, "<br>", "Inflation: ", inflation)
+  ) %>%
+  addLegend(
+    "bottomright", 
+    pal = inflation_palette, 
+    values = ~inflation, 
+    title = "Inflation (%)", 
+    opacity = 1
+  )
+```
+```{r}
+leaflet(geocoded_countries) %>% 
+  addProviderTiles(providers$CartoDB.Voyager, group = "Light map") %>%
+  addScaleBar() %>%
+  addCircleMarkers(
+    lng = geocoded_countries$long, lat = geocoded_countries$lat,
+    radius = 8,
+    color = ~unemployment_palette(Unemployment),  
+    stroke = TRUE, fillOpacity = 0.9,
+    label = ~paste(country, "<br>", "Unemployment: ", Unemployment)
+  ) %>%
+  addLegend(
+    "bottomright", 
+    pal = unemployment_palette, 
+    values = ~Unemployment, 
+    title = "Unemployment (%)", 
+    opacity = 1
+  )
+
+
+```
+
+
+
+
+
+```{r}
+
+countries <- ne_countries(scale = "medium", returnclass = "sf")
+
+countries_filtered <- countries %>%
+  filter(admin %in% Data$country)  
+
+```
+
+
+```{r}
+
+Data <- Data %>%
+  drop_na(inflation, Unemployment)
+countries_merged <- merge(countries_filtered, Data, by.x = "admin", by.y = "country")
+
+```
+
+
+```{r}
+
+inflation_palette <- colorNumeric(
+  palette = "YlOrRd",  
+  domain = countries_merged$inflation
+)
+
+unemployment_palette <- colorNumeric(
+  palette = "Blues",  
+  domain = countries_merged$Unemployment
+)
+
+```
+
+
+```{r}
+leaflet(countries_merged) %>% 
+  addProviderTiles(providers$CartoDB.Voyager, group = "Light map") %>%
+  addPolygons(
+    fillColor = ~inflation_palette(inflation),  
+    color = "black",  
+    weight = 1,  
+    fillOpacity = 0.7, 
+    highlight = highlightOptions(weight = 2, color = "white", bringToFront = TRUE),
+    label = ~paste(admin, "<br>", "Inflation: ", inflation)
+  ) %>%
+  addLegend(
+    "bottomright", 
+    pal = inflation_palette, 
+    values = ~inflation, 
+    title = "Inflation (%)", 
+    opacity = 1
+  )
+
+```
+
+
+
+```{r}
+
+leaflet(countries_merged) %>% 
+  addProviderTiles(providers$CartoDB.Voyager, group = "Light map") %>%
+  addPolygons(
+    fillColor = ~unemployment_palette(Unemployment),  
+    color = "black",  
+    weight = 1,  
+    fillOpacity = 0.7,  
+    highlight = highlightOptions(weight = 2, color = "white", bringToFront = TRUE),
+    label = ~paste(admin, "<br>", "Unemployment: ", Unemployment)
+  ) %>%
+  addLegend(
+    "bottomright", 
+    pal = unemployment_palette, 
+    values = ~Unemployment, 
+    title = "Unemployment (%)", 
+    opacity = 1
+  )
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
